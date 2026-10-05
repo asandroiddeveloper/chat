@@ -1,0 +1,78 @@
+name: Android CI
+
+on:
+  push:
+    branches:
+      - main
+      - "arena/**"
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Assemble debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Install Android SDK packages
+        run: |
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          export ANDROID_SDK_ROOT="$SDK"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          SDKMGR="$SDK/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMGR" ]; then SDKMGR="$(command -v sdkmanager)"; fi
+          yes | "$SDKMGR" --licenses > /dev/null 2>&1 || true
+          "$SDKMGR" "platform-tools" "platforms;android-37" "build-tools;36.0.0"
+
+      - name: Latest published dependency versions (reference)
+        run: |
+          python3 - <<'PY'
+          import re, urllib.request
+          artifacts = [
+              "androidx/core/core-ktx",
+              "androidx/activity/activity-compose",
+              "androidx/lifecycle/lifecycle-viewmodel-compose",
+              "androidx/compose/compose-bom",
+          ]
+          for artifact in artifacts:
+              url = f"https://dl.google.com/dl/android/maven2/{artifact}/maven-metadata.xml"
+              try:
+                  xml = urllib.request.urlopen(url, timeout=30).read().decode()
+                  versions = re.findall(r"<version>([^<]+)</version>", xml)
+                  stable = [v for v in versions if not re.search(r"alpha|beta|rc|dev", v, re.I)]
+                  print(f"{artifact}: latest={versions[-1] if versions else '?'} latestStable={stable[-1] if stable else '?'}")
+              except Exception as exc:  # noqa: BLE001
+                  print(f"{artifact}: lookup failed ({exc})")
+          PY
+
+      - name: Print toolchain versions
+        run: ./gradlew --version
+
+      - name: Assemble debug
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
