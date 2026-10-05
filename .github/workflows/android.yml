@@ -57,7 +57,11 @@ jobs:
           BUILD_TOOLS="$(ls "$SDK/build-tools" 2>/dev/null | tr '\n' ' ')"
           echo "platforms: $PLATFORMS"
           echo "build-tools: $BUILD_TOOLS"
-          echo "::notice title=Android SDK::platforms: $PLATFORMS | build-tools: $BUILD_TOOLS"
+          {
+            echo "### Android SDK"
+            echo "- platforms: \`$PLATFORMS\`"
+            echo "- build-tools: \`$BUILD_TOOLS\`"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Latest published dependency versions (reference)
         run: |
@@ -122,3 +126,22 @@ jobs:
           name: app-debug
           path: app/build/outputs/apk/debug/*.apk
           if-no-files-found: error
+
+      - name: Inspect debug APK
+        if: success()
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          SDK="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          AAPT2="$(ls "$SDK"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -1)"
+
+          SIZE="$(du -h "$APK" | cut -f1)"
+          SHA="$(sha256sum "$APK" | cut -c1-16)"
+          BADGING="$("$AAPT2" dump badging "$APK" 2>/dev/null | grep -E "^package:|^application-label:|^launchable-activity:|^sdkVersion:|^targetSdkVersion:" | tr '\n' ' ')"
+
+          {
+            echo "### Debug APK"
+            echo "- size: $SIZE"
+            echo "- sha256 (short): $SHA"
+            echo "- \`$BADGING\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice title=Debug APK::$SIZE | $BADGING"
